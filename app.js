@@ -1094,11 +1094,18 @@ function itemAppliesTo(item, mKey) {
   if (item.until && mKey > item.until) return false;
   return true;
 }
+// Montant réel d'une ligne : soit son montant fixe, soit le solde du compte associé si activé
+function itemAmount(item) {
+  if (item.useAccountBalance && item.accountId) {
+    return Math.max(0, accountBalance(item.accountId));
+  }
+  return Number(item.amount || 0);
+}
 function planTotals(monthDate = new Date()) {
   const mKey = monthKey(monthDate);
   const applicable = (arr) => (arr || []).filter(x => itemAppliesTo(x, mKey));
-  const income = applicable(state.plan.incomes).reduce((s, x) => s + Number(x.amount || 0), 0);
-  const fixed = applicable(state.plan.fixed).reduce((s, x) => s + Number(x.amount || 0), 0);
+  const income = applicable(state.plan.incomes).reduce((s, x) => s + itemAmount(x), 0);
+  const fixed = applicable(state.plan.fixed).reduce((s, x) => s + itemAmount(x), 0);
   return { income, fixed, remaining: income - fixed };
 }
 
@@ -1297,7 +1304,8 @@ function renderPlanRow(kind, item, defaultColor, mKey, inactive = false) {
     const acc = state.accounts.find(a => a.id === item.accountId);
     if (acc) sub.push(`${acc.icon} ${acc.name}`);
   }
-  if (item.day) sub.push(`Le ${item.day} du mois`);
+  if (item.useAccountBalance) sub.push('🔄 Solde en direct');
+  else if (item.day) sub.push(`Le ${item.day} du mois`);
   if (inactive) {
     if (item.from && mKey < item.from) sub.push(`À partir de ${prettyMonth(item.from)}`);
     else if (item.until && mKey > item.until) sub.push(`Terminé en ${prettyMonth(item.until)}`);
@@ -1310,7 +1318,7 @@ function renderPlanRow(kind, item, defaultColor, mKey, inactive = false) {
       sub.length ? h('div', { class:'s' }, sub.join(' · ')) : null,
     ),
     h('div', { class:'amt '+(inactive ? '' : (kind==='incomes'?'pos':'neg')) },
-      inactive ? fmt(item.amount) : `${kind==='incomes'?'+':'-'}${fmt(item.amount)}`),
+      inactive ? fmt(itemAmount(item)) : `${kind==='incomes'?'+':'-'}${fmt(itemAmount(item))}`),
     h('div', { class:'chevron' }, '›'),
   );
 }
@@ -1341,10 +1349,49 @@ function openPlanItemForm(kind, existing) {
       placeholder:'Ex. 5 pour le 5 du mois',
       oninput: e => it.day = e.target.value ? parseInt(e.target.value) : '' })));
 
-  form.appendChild(field('Compte concerné (optionnel)',
-    h('select', { onchange: e => it.accountId = e.target.value || null },
+  const accField = field('Compte concerné (optionnel)',
+    h('select', { onchange: e => { it.accountId = e.target.value || null; updateLiveBox(); } },
       h('option', { value:'', selected: !it.accountId }, '—'),
-      ...state.accounts.map(a => h('option', { value: a.id, selected: it.accountId===a.id }, `${a.icon} ${a.name}`)))));
+      ...state.accounts.map(a => h('option', { value: a.id, selected: it.accountId===a.id }, `${a.icon} ${a.name}`))));
+  form.appendChild(accField);
+
+  // Case à cocher : utiliser le solde du compte comme montant
+  const liveBox = h('label', { class:'toggle-row' },
+    h('input', { type:'checkbox', checked: !!it.useAccountBalance,
+      onchange: e => { it.useAccountBalance = e.target.checked; updateLiveBox(); } }),
+    h('div', { class:'grow' },
+      h('div', { style:'font-weight:600;font-size:15px' }, '🔄 Utiliser le solde du compte'),
+      h('div', { style:'font-size:12px;color:var(--text-2);margin-top:2px' },
+        'Le montant sera automatiquement égal au solde actuel de ce compte, et se mettra à jour à chaque transaction.'),
+    ),
+  );
+  const liveHint = h('div', { class:'hint', style:'display:none' });
+  function updateLiveBox() {
+    const disabled = !it.accountId;
+    liveBox.style.opacity = disabled ? '0.4' : '1';
+    liveBox.querySelector('input').disabled = disabled;
+    if (disabled && it.useAccountBalance) {
+      it.useAccountBalance = false;
+      liveBox.querySelector('input').checked = false;
+    }
+    // Grise le champ montant si live
+    const amtInput = amtField.querySelector('input');
+    if (amtInput) {
+      amtInput.disabled = !!it.useAccountBalance;
+      amtInput.style.opacity = it.useAccountBalance ? '0.4' : '1';
+    }
+    // Affiche le solde live si actif
+    if (it.useAccountBalance && it.accountId) {
+      const acc = state.accounts.find(a => a.id === it.accountId);
+      liveHint.style.display = 'block';
+      liveHint.textContent = `Solde actuel de ${acc?.name || 'ce compte'} : ${fmt(accountBalance(it.accountId))}`;
+    } else {
+      liveHint.style.display = 'none';
+    }
+  }
+  form.appendChild(liveBox);
+  form.appendChild(liveHint);
+  setTimeout(updateLiveBox, 0);
 
   form.appendChild(h('div', { style:'display:grid;grid-template-columns:1fr 1fr;gap:10px' },
     field('Actif à partir de',
@@ -1383,7 +1430,8 @@ function openPlanItemForm(kind, existing) {
     confirmText: 'Enregistrer',
     onConfirm: () => {
       if (!it.name) { toast('Nom requis'); return false; }
-      if (!it.amount || it.amount <= 0) { toast('Montant invalide'); return false; }
+      if (!it.useAccountBalance && (!it.amount || it.amount <= 0)) { toast('Montant invalide'); return false; }
+      if (it.useAccountBalance && !it.accountId) { toast('Choisir un compte'); return false; }
       if (existing) {
         Object.assign(state.plan[kind].find(x => x.id === existing.id), it);
       } else {

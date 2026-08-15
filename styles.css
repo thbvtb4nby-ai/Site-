@@ -688,6 +688,19 @@ svg.chart { width: 100%; height: auto; display: block; }
 .row.inactive .ico-wrap { filter: grayscale(0.4); }
 .row.inactive .amt { color: var(--text-3); font-weight: 500; }
 
+/* Toggle row (checkbox with description) */
+.toggle-row {
+  display: flex; align-items: flex-start; gap: 12px;
+  padding: 14px; margin-bottom: 12px;
+  background: var(--card-2); border-radius: 12px;
+  cursor: pointer;
+}
+.toggle-row input[type="checkbox"] {
+  width: 22px; height: 22px; accent-color: var(--accent);
+  margin-top: 1px; flex-shrink: 0;
+}
+.toggle-row .grow { flex: 1; min-width: 0; }
+
 /* Hint text */
 .hint {
   font-size: 13px; color: var(--text-2);
