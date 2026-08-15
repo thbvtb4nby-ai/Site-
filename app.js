@@ -1191,9 +1191,6 @@ function buildPlannerBody(wrap, monthDate) {
   } else {
     const list = h('div', { class:'card card-list stagger' });
     for (const item of activeIncomes) list.appendChild(renderPlanRow('incomes', item, '#30d158', mKey));
-    // Show also inactive items with dimmed style
-    const inactive = state.plan.incomes.filter(x => !itemAppliesTo(x, mKey));
-    for (const item of inactive) list.appendChild(renderPlanRow('incomes', item, '#30d158', mKey, true));
     wrap.appendChild(list);
   }
 
@@ -1211,10 +1208,23 @@ function buildPlannerBody(wrap, monthDate) {
     ));
   } else {
     const list = h('div', { class:'card card-list stagger' });
-    for (const item of activeFixed) list.appendChild(renderPlanRow('fixed', item, '#ff3b30', mKey));
-    const inactive = state.plan.fixed.filter(x => !itemAppliesTo(x, mKey));
-    for (const item of inactive) list.appendChild(renderPlanRow('fixed', item, '#ff3b30', mKey, true));
+    if (activeFixed.length === 0) {
+      list.appendChild(h('div', { class:'empty', style:'padding:32px 20px' },
+        h('div', { class:'icon' }, '⏳'),
+        h('div', { class:'title' }, 'Aucune charge ce mois'),
+        h('div', { class:'desc' }, 'Vos charges ne sont pas actives sur cette période.')));
+    } else {
+      for (const item of activeFixed) list.appendChild(renderPlanRow('fixed', item, '#ff3b30', mKey));
+    }
     wrap.appendChild(list);
+  }
+
+  // Info sur les éléments masqués (pas actifs ce mois)
+  const hiddenCount = state.plan.incomes.filter(x => !itemAppliesTo(x, mKey)).length
+                   + state.plan.fixed.filter(x => !itemAppliesTo(x, mKey)).length;
+  if (hiddenCount > 0) {
+    wrap.appendChild(h('div', { class:'hint', style:'margin-top:16px;text-align:center' },
+      `${hiddenCount} élément${hiddenCount>1?'s':''} masqué${hiddenCount>1?'s':''} (non actif${hiddenCount>1?'s':''} ce mois-ci)`));
   }
 
   // Info footer
