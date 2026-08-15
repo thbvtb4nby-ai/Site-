@@ -1,0 +1,22 @@
+name: ExpenseTracker
+options:
+  bundleIdPrefix: com.example
+  deploymentTarget:
+    iOS: "17.0"
+targets:
+  ExpenseTracker:
+    type: application
+    platform: iOS
+    sources: [ExpenseTracker]
+    info:
+      path: ExpenseTracker/Info.plist
+      properties:
+        UILaunchScreen: {}
+        NSFaceIDUsageDescription: "Utilisé pour déverrouiller l'application."
+        NSCameraUsageDescription: "Utilisé pour scanner les reçus."
+        NSPhotoLibraryUsageDescription: "Utilisé pour importer des reçus."
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.ExpenseTracker
+        SWIFT_VERSION: "5.9"
+        TARGETED_DEVICE_FAMILY: "1"
