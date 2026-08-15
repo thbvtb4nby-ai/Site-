@@ -160,7 +160,7 @@ let currentTab = 'dashboard';
 
 function render() {
   app.innerHTML = '';
-  const views = { dashboard: renderDashboard, transactions: renderTransactions, budgets: renderBudgets, more: renderMore };
+  const views = { dashboard: renderDashboard, transactions: renderTransactions, planner: renderPlanner, more: renderMore };
   const view = (views[currentTab] || renderDashboard)();
   app.appendChild(view);
   for (const b of document.querySelectorAll('#tabbar button[data-tab]')) {
@@ -882,7 +882,7 @@ function renderMore() {
   const wrap = h('div');
   wrap.appendChild(h('h1', {}, 'Plus'));
   const menu = h('div', { class:'settings-group' },
-    row('🧮','Prévisionnel mensuel', openPlannerScreen),
+    row('🥧','Budgets', () => openModal('Budgets', renderBudgets())),
     row('📊','Rapports', openReportsScreen),
     row('💳','Comptes', openAccountsScreen),
     row('🏷️','Catégories', openCategoriesScreen),
@@ -985,8 +985,23 @@ function planTotals() {
   return { income, fixed, remaining: income - fixed };
 }
 
+function renderPlanner() {
+  const wrap = h('div');
+  wrap.appendChild(h('div', { class:'screen-header' },
+    h('h1', {}, 'Prévision'),
+    h('div', { class:'subtitle' }, 'Vos revenus et charges fixes chaque mois'),
+  ));
+  buildPlannerBody(wrap);
+  return wrap;
+}
+
 function openPlannerScreen() {
   const wrap = h('div');
+  buildPlannerBody(wrap);
+  openModal('Prévisionnel mensuel', wrap);
+}
+
+function buildPlannerBody(wrap) {
   const { income, fixed, remaining } = planTotals();
   const daysInMonth = new Date(new Date().getFullYear(), new Date().getMonth()+1, 0).getDate();
   const perDay = remaining / daysInMonth;
@@ -1056,8 +1071,6 @@ function openPlannerScreen() {
     'Le prévisionnel est indépendant de vos transactions réelles.',
     h('br'),
     'Il sert à planifier votre budget mensuel type.'));
-
-  openModal('Prévisionnel mensuel', wrap);
 }
 
 function renderPlanRow(kind, item, defaultColor) {
@@ -1103,7 +1116,7 @@ function openPlanItemForm(kind, existing) {
     confirmDialog('Supprimer cette ligne ?', () => {
       state.plan[kind] = state.plan[kind].filter(x => x.id !== existing.id);
       save(); m.close();
-      setTimeout(openPlannerScreen, 250);
+      if (currentTab === 'planner') render(); else setTimeout(openPlannerScreen, 250);
       toast('Supprimé');
     });
   } }, 'Supprimer'));
@@ -1124,7 +1137,7 @@ function openPlanItemForm(kind, existing) {
         state.plan[kind].push(it);
       }
       save(); toast('Enregistré');
-      setTimeout(openPlannerScreen, 250);
+      if (currentTab === 'planner') render(); else setTimeout(openPlannerScreen, 250);
     }
   });
 }
