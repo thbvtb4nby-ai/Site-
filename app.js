@@ -173,6 +173,23 @@ function applyTheme() {
   document.documentElement.dataset.theme = (t === 'system') ? '' : t;
 }
 
+// Animate a numeric text node from 0 (or previous value) to target value
+function animateNumber(el, to, code = state.settings.currency, duration = 700) {
+  if (!el) return;
+  const from = 0;
+  const start = performance.now();
+  const format = (v) => new Intl.NumberFormat(state.settings.locale, {
+    style: 'currency', currency: code, maximumFractionDigits: 2
+  }).format(v);
+  function step(t) {
+    const p = Math.min(1, (t - start) / duration);
+    const eased = 1 - Math.pow(1 - p, 3);
+    el.textContent = format(from + (to - from) * eased);
+    if (p < 1) requestAnimationFrame(step);
+  }
+  requestAnimationFrame(step);
+}
+
 // ---------- Dashboard ----------
 function greeting() {
   const hh = new Date().getHours();
@@ -190,10 +207,12 @@ function renderDashboard() {
   ));
 
   const { expense, income } = monthTotals();
+  const balanceEl = h('div', { class:'val' }, fmt(totalBalance()));
   const hero = h('div', { class:'hero' },
     h('div', { class:'label' }, 'Solde total'),
-    h('div', { class:'val' }, fmt(totalBalance())),
+    balanceEl,
   );
+  requestAnimationFrame(() => animateNumber(balanceEl, totalBalance()));
   if (state.accounts.length) {
     const strip = h('div', { class:'accounts-strip' });
     for (const a of state.accounts) {
@@ -235,23 +254,30 @@ function renderDashboard() {
 
   // Planner summary (reste à vivre)
   if (state.plan.incomes.length || state.plan.fixed.length) {
-    const { income: pi, fixed: pf, remaining: pr } = planTotals();
-    const dim = new Date(new Date().getFullYear(), new Date().getMonth()+1, 0).getDate();
-    const perDay = pr / dim;
-    container.appendChild(h('h2', {}, 'Prévisionnel'));
-    const card = h('div', { class:'card', onclick: openPlannerScreen, style:'cursor:pointer' },
+    const now = new Date();
+    const { income: pi, fixed: pf, remaining: pr } = planTotals(now);
+    const dim = new Date(now.getFullYear(), now.getMonth()+1, 0).getDate();
+    const dayNum = now.getDate();
+    const daysLeft = Math.max(1, dim - dayNum + 1);
+    const perDayLeft = pr / daysLeft;
+    container.appendChild(h('h2', {}, 'Prévisionnel du mois'));
+    const card = h('div', { class:'card', onclick: () => { currentTab = 'planner'; plannerMonth = new Date(); render(); }, style:'cursor:pointer' },
       h('div', { class:'spaced' },
         h('div', {},
           h('div', { style:'font-size:13px;color:var(--text-2);font-weight:600;text-transform:uppercase;letter-spacing:0.05em' }, 'Reste à vivre'),
-          h('div', { class: 'amt '+(pr>=0?'pos':'neg'), style:'font-size:28px;margin-top:4px' }, fmt(pr)),
+          h('div', { class: 'amt '+(pr>=0?'pos':'neg'), style:'font-size:30px;margin-top:4px' }, fmt(pr)),
         ),
         h('div', { style:'text-align:right' },
-          h('div', { style:'font-size:12px;color:var(--text-2)' }, `${fmt(pi)} entrées`),
-          h('div', { style:'font-size:12px;color:var(--text-2);margin-top:2px' }, `${fmt(pf)} charges`),
+          h('div', { style:'font-size:12px;color:var(--text-2)' }, `+ ${fmt(pi)}`),
+          h('div', { style:'font-size:12px;color:var(--text-2);margin-top:2px' }, `− ${fmt(pf)}`),
         ),
       ),
-      h('div', { style:'margin-top:10px;font-size:13px;color:var(--text-2)' },
-        `≈ ${fmt(perDay)} / jour sur ${dim} jours`),
+      h('div', { class:'progress', style:'margin-top:12px' },
+        h('div', { class:'fill', style:`width:${Math.min(100, (pf/(pi||1))*100)}%;background:${pr>=0?'var(--grad-success)':'var(--grad-danger)'}` })),
+      h('div', { style:'margin-top:8px;display:flex;justify-content:space-between;font-size:12px;color:var(--text-2)' },
+        h('span', {}, `${daysLeft} jour${daysLeft>1?'s':''} restant${daysLeft>1?'s':''}`),
+        h('span', {}, `≈ ${fmt(perDayLeft)} / jour`),
+      ),
     );
     container.appendChild(card);
   }
@@ -979,32 +1005,62 @@ function openAboutScreen() {
 }
 
 // ===================== Planner (revenus & charges fixes) =====================
-function planTotals() {
-  const income = (state.plan.incomes || []).reduce((s, x) => s + Number(x.amount || 0), 0);
-  const fixed = (state.plan.fixed || []).reduce((s, x) => s + Number(x.amount || 0), 0);
+function itemAppliesTo(item, mKey) {
+  if (item.from && mKey < item.from) return false;
+  if (item.until && mKey > item.until) return false;
+  return true;
+}
+function planTotals(monthDate = new Date()) {
+  const mKey = monthKey(monthDate);
+  const applicable = (arr) => (arr || []).filter(x => itemAppliesTo(x, mKey));
+  const income = applicable(state.plan.incomes).reduce((s, x) => s + Number(x.amount || 0), 0);
+  const fixed = applicable(state.plan.fixed).reduce((s, x) => s + Number(x.amount || 0), 0);
   return { income, fixed, remaining: income - fixed };
+}
+
+let plannerMonth = new Date(); // month currently shown in planner tab
+function shiftPlannerMonth(delta) {
+  plannerMonth = new Date(plannerMonth.getFullYear(), plannerMonth.getMonth() + delta, 1);
+  render();
 }
 
 function renderPlanner() {
   const wrap = h('div');
   wrap.appendChild(h('div', { class:'screen-header' },
     h('h1', {}, 'Prévision'),
-    h('div', { class:'subtitle' }, 'Vos revenus et charges fixes chaque mois'),
   ));
-  buildPlannerBody(wrap);
+
+  // Month navigator
+  const monthLabel = plannerMonth.toLocaleDateString(state.settings.locale, { month:'long', year:'numeric' });
+  const isCurrent = monthKey(plannerMonth) === monthKey(new Date());
+  wrap.appendChild(h('div', { class:'month-nav' },
+    h('button', { class:'nav-btn', onclick: () => shiftPlannerMonth(-1), 'aria-label':'Mois précédent' }, '‹'),
+    h('div', { class:'month-title' },
+      h('div', { class:'m-name' }, monthLabel.charAt(0).toUpperCase() + monthLabel.slice(1)),
+      !isCurrent ? h('button', { class:'today-btn', onclick: () => { plannerMonth = new Date(); render(); } }, 'Aujourd\'hui') : null,
+    ),
+    h('button', { class:'nav-btn', onclick: () => shiftPlannerMonth(1), 'aria-label':'Mois suivant' }, '›'),
+  ));
+
+  buildPlannerBody(wrap, plannerMonth);
   return wrap;
 }
 
 function openPlannerScreen() {
   const wrap = h('div');
-  buildPlannerBody(wrap);
+  buildPlannerBody(wrap, new Date());
   openModal('Prévisionnel mensuel', wrap);
 }
 
-function buildPlannerBody(wrap) {
-  const { income, fixed, remaining } = planTotals();
-  const daysInMonth = new Date(new Date().getFullYear(), new Date().getMonth()+1, 0).getDate();
+function buildPlannerBody(wrap, monthDate) {
+  const mKey = monthKey(monthDate);
+  const { income, fixed, remaining } = planTotals(monthDate);
+  const daysInMonth = new Date(monthDate.getFullYear(), monthDate.getMonth()+1, 0).getDate();
   const perDay = remaining / daysInMonth;
+
+  const applicable = (arr) => (arr || []).filter(x => itemAppliesTo(x, mKey));
+  const activeIncomes = applicable(state.plan.incomes);
+  const activeFixed = applicable(state.plan.fixed);
 
   // Summary card
   const remCls = remaining >= 0 ? 'pos' : 'neg';
@@ -1042,9 +1098,18 @@ function buildPlannerBody(wrap) {
       h('div', { class:'desc' }, 'Ajoutez votre salaire, une aide, une bourse…'),
       h('button', { class:'btn gradient', onclick: () => openPlanItemForm('incomes') }, '＋  Ajouter un revenu'),
     ));
+  } else if (!activeIncomes.length) {
+    wrap.appendChild(h('div', { class:'card empty' },
+      h('div', { class:'icon' }, '⏳'),
+      h('div', { class:'title' }, 'Aucun revenu ce mois'),
+      h('div', { class:'desc' }, 'Vos revenus ne sont pas actifs sur cette période.'),
+    ));
   } else {
-    const list = h('div', { class:'card card-list' });
-    for (const item of state.plan.incomes) list.appendChild(renderPlanRow('incomes', item, '#30d158'));
+    const list = h('div', { class:'card card-list stagger' });
+    for (const item of activeIncomes) list.appendChild(renderPlanRow('incomes', item, '#30d158', mKey));
+    // Show also inactive items with dimmed style
+    const inactive = state.plan.incomes.filter(x => !itemAppliesTo(x, mKey));
+    for (const item of inactive) list.appendChild(renderPlanRow('incomes', item, '#30d158', mKey, true));
     wrap.appendChild(list);
   }
 
@@ -1061,8 +1126,10 @@ function buildPlannerBody(wrap) {
       h('button', { class:'btn gradient', onclick: () => openPlanItemForm('fixed') }, '＋  Ajouter une charge'),
     ));
   } else {
-    const list = h('div', { class:'card card-list' });
-    for (const item of state.plan.fixed) list.appendChild(renderPlanRow('fixed', item, '#ff3b30'));
+    const list = h('div', { class:'card card-list stagger' });
+    for (const item of activeFixed) list.appendChild(renderPlanRow('fixed', item, '#ff3b30', mKey));
+    const inactive = state.plan.fixed.filter(x => !itemAppliesTo(x, mKey));
+    for (const item of inactive) list.appendChild(renderPlanRow('fixed', item, '#ff3b30', mKey, true));
     wrap.appendChild(list);
   }
 
@@ -1073,16 +1140,29 @@ function buildPlannerBody(wrap) {
     'Il sert à planifier votre budget mensuel type.'));
 }
 
-function renderPlanRow(kind, item, defaultColor) {
-  return h('div', { class:'row', onclick: () => openPlanItemForm(kind, item) },
+function renderPlanRow(kind, item, defaultColor, mKey, inactive = false) {
+  const sub = [];
+  if (item.day) sub.push(`Le ${item.day} du mois`);
+  if (inactive) {
+    if (item.from && mKey < item.from) sub.push(`À partir de ${prettyMonth(item.from)}`);
+    else if (item.until && mKey > item.until) sub.push(`Terminé en ${prettyMonth(item.until)}`);
+    else sub.push('Inactif');
+  }
+  return h('div', { class:'row'+(inactive?' inactive':''), onclick: () => openPlanItemForm(kind, item) },
     h('div', { class:'ico-wrap', style:{ background: item.color || defaultColor } }, item.icon || '•'),
     h('div', { class:'grow' },
       h('div', { class:'t' }, item.name),
-      item.day ? h('div', { class:'s' }, `Le ${item.day} du mois`) : null,
+      sub.length ? h('div', { class:'s' }, sub.join(' · ')) : null,
     ),
-    h('div', { class:'amt '+(kind==='incomes'?'pos':'neg') }, `${kind==='incomes'?'+':'-'}${fmt(item.amount)}`),
+    h('div', { class:'amt '+(inactive ? '' : (kind==='incomes'?'pos':'neg')) },
+      inactive ? fmt(item.amount) : `${kind==='incomes'?'+':'-'}${fmt(item.amount)}`),
     h('div', { class:'chevron' }, '›'),
   );
+}
+
+function prettyMonth(mKey) {
+  const [y, m] = mKey.split('-').map(Number);
+  return new Date(y, m-1, 1).toLocaleDateString(state.settings.locale, { month:'long', year:'numeric' });
 }
 
 function openPlanItemForm(kind, existing) {
@@ -1105,6 +1185,20 @@ function openPlanItemForm(kind, existing) {
     h('input', { type:'number', min:'1', max:'31', value: it.day || '',
       placeholder:'Ex. 5 pour le 5 du mois',
       oninput: e => it.day = e.target.value ? parseInt(e.target.value) : '' })));
+
+  form.appendChild(h('div', { style:'display:grid;grid-template-columns:1fr 1fr;gap:10px' },
+    field('Actif à partir de',
+      h('input', { type:'month', value: it.from || '',
+        oninput: e => it.from = e.target.value || '' })),
+    field('Jusqu\'à (optionnel)',
+      h('input', { type:'month', value: it.until || '',
+        oninput: e => it.until = e.target.value || '' })),
+  ));
+  form.appendChild(h('div', { class:'hint' },
+    isIncome
+      ? '💡 Ex. si ton salaire commence en octobre, mets "10/2026" comme date de début.'
+      : '💡 Utile pour un abonnement qui commence bientôt ou qui se termine à une date précise.'
+  ));
 
   const commonIcons = isIncome
     ? ['💼','💰','👨‍👩‍👧','🎓','🏛️','🎁','💵','📈','🪙','💳']
