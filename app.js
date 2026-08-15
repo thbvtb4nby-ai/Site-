@@ -1219,6 +1219,36 @@ function buildPlannerBody(wrap, monthDate) {
     wrap.appendChild(list);
   }
 
+  // Répartition par compte (si au moins une ligne a un compte)
+  const linked = [...activeIncomes, ...activeFixed].filter(x => x.accountId);
+  if (linked.length > 0) {
+    const perAccount = {};
+    for (const x of activeIncomes) {
+      const k = x.accountId || '__none__';
+      perAccount[k] = perAccount[k] || { income: 0, fixed: 0 };
+      perAccount[k].income += Number(x.amount || 0);
+    }
+    for (const x of activeFixed) {
+      const k = x.accountId || '__none__';
+      perAccount[k] = perAccount[k] || { income: 0, fixed: 0 };
+      perAccount[k].fixed += Number(x.amount || 0);
+    }
+    wrap.appendChild(h('h2', {}, 'Par compte'));
+    const card = h('div', { class:'card card-list' });
+    for (const [accId, { income: ai, fixed: af }] of Object.entries(perAccount)) {
+      const acc = state.accounts.find(a => a.id === accId);
+      const remain = ai - af;
+      card.appendChild(h('div', { class:'row' },
+        h('div', { class:'ico-wrap', style:{ background: acc?.color || '#8e8e93' } }, acc?.icon || '❓'),
+        h('div', { class:'grow' },
+          h('div', { class:'t' }, acc?.name || 'Sans compte'),
+          h('div', { class:'s' }, `+ ${fmt(ai)}  ·  − ${fmt(af)}`)),
+        h('div', { class:'amt '+(remain>=0?'pos':'neg') }, fmt(remain)),
+      ));
+    }
+    wrap.appendChild(card);
+  }
+
   // Info sur les éléments masqués (pas actifs ce mois)
   const hiddenCount = state.plan.incomes.filter(x => !itemAppliesTo(x, mKey)).length
                    + state.plan.fixed.filter(x => !itemAppliesTo(x, mKey)).length;
@@ -1236,6 +1266,10 @@ function buildPlannerBody(wrap, monthDate) {
 
 function renderPlanRow(kind, item, defaultColor, mKey, inactive = false) {
   const sub = [];
+  if (item.accountId) {
+    const acc = state.accounts.find(a => a.id === item.accountId);
+    if (acc) sub.push(`${acc.icon} ${acc.name}`);
+  }
   if (item.day) sub.push(`Le ${item.day} du mois`);
   if (inactive) {
     if (item.from && mKey < item.from) sub.push(`À partir de ${prettyMonth(item.from)}`);
@@ -1279,6 +1313,11 @@ function openPlanItemForm(kind, existing) {
     h('input', { type:'number', min:'1', max:'31', value: it.day || '',
       placeholder:'Ex. 5 pour le 5 du mois',
       oninput: e => it.day = e.target.value ? parseInt(e.target.value) : '' })));
+
+  form.appendChild(field('Compte concerné (optionnel)',
+    h('select', { onchange: e => it.accountId = e.target.value || null },
+      h('option', { value:'', selected: !it.accountId }, '—'),
+      ...state.accounts.map(a => h('option', { value: a.id, selected: it.accountId===a.id }, `${a.icon} ${a.name}`)))));
 
   form.appendChild(h('div', { style:'display:grid;grid-template-columns:1fr 1fr;gap:10px' },
     field('Actif à partir de',
