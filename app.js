@@ -1219,31 +1219,58 @@ function buildPlannerBody(wrap, monthDate) {
     wrap.appendChild(list);
   }
 
-  // Répartition par compte (si au moins une ligne a un compte)
-  const linked = [...activeIncomes, ...activeFixed].filter(x => x.accountId);
-  if (linked.length > 0) {
-    const perAccount = {};
-    for (const x of activeIncomes) {
-      const k = x.accountId || '__none__';
-      perAccount[k] = perAccount[k] || { income: 0, fixed: 0 };
-      perAccount[k].income += Number(x.amount || 0);
-    }
-    for (const x of activeFixed) {
-      const k = x.accountId || '__none__';
-      perAccount[k] = perAccount[k] || { income: 0, fixed: 0 };
-      perAccount[k].fixed += Number(x.amount || 0);
-    }
-    wrap.appendChild(h('h2', {}, 'Par compte'));
-    const card = h('div', { class:'card card-list' });
+  // Répartition par compte : solde actuel + prévisions restantes
+  const today = new Date();
+  const isCurMonth = monthKey(monthDate) === monthKey(today);
+  const currentDay = today.getDate();
+  // Pour le mois en cours : ne compte que les lignes dont le jour est >= aujourd'hui (donc pas encore passées)
+  // Pour un autre mois : compte toutes les lignes
+  const stillToCome = (item) => {
+    if (!isCurMonth) return true;
+    const day = item.day || 1;
+    return day >= currentDay;
+  };
+  const perAccount = {};
+  for (const x of activeIncomes) {
+    if (!stillToCome(x)) continue;
+    const k = x.accountId || '__none__';
+    perAccount[k] = perAccount[k] || { income: 0, fixed: 0 };
+    perAccount[k].income += Number(x.amount || 0);
+  }
+  for (const x of activeFixed) {
+    if (!stillToCome(x)) continue;
+    const k = x.accountId || '__none__';
+    perAccount[k] = perAccount[k] || { income: 0, fixed: 0 };
+    perAccount[k].fixed += Number(x.amount || 0);
+  }
+  // Inclure aussi les comptes sans ligne prévisionnelle (juste pour voir leur solde)
+  for (const a of state.accounts) if (!perAccount[a.id]) perAccount[a.id] = { income: 0, fixed: 0 };
+
+  const isCurrentMonth = isCurMonth;
+  if (Object.keys(perAccount).length > 0) {
+    wrap.appendChild(h('h2', {}, isCurrentMonth ? 'Comptes · projection fin de mois' : 'Comptes · prévu'));
+    const card = h('div', { class:'card card-list stagger' });
     for (const [accId, { income: ai, fixed: af }] of Object.entries(perAccount)) {
       const acc = state.accounts.find(a => a.id === accId);
-      const remain = ai - af;
-      card.appendChild(h('div', { class:'row' },
+      if (!acc && accId === '__none__' && ai === 0 && af === 0) continue;
+
+      const current = acc ? accountBalance(acc.id) : 0;
+      const projected = current + ai - af;
+      const meta = [];
+      if (ai) meta.push(`+ ${fmt(ai)}`);
+      if (af) meta.push(`− ${fmt(af)}`);
+
+      card.appendChild(h('div', { class:'row account-projection' },
         h('div', { class:'ico-wrap', style:{ background: acc?.color || '#8e8e93' } }, acc?.icon || '❓'),
         h('div', { class:'grow' },
           h('div', { class:'t' }, acc?.name || 'Sans compte'),
-          h('div', { class:'s' }, `+ ${fmt(ai)}  ·  − ${fmt(af)}`)),
-        h('div', { class:'amt '+(remain>=0?'pos':'neg') }, fmt(remain)),
+          acc ? h('div', { class:'s' }, `Solde actuel : ${fmt(current)}${meta.length ? '  ·  ' + meta.join(' ') : ''}`)
+              : (meta.length ? h('div', { class:'s' }, meta.join('  ·  ')) : null),
+        ),
+        h('div', { style:'text-align:right' },
+          h('div', { class:'amt '+(projected>=0?'pos':'neg'), style:'font-size:16px' }, fmt(projected)),
+          isCurrentMonth ? h('div', { style:'font-size:11px;color:var(--text-2);margin-top:2px' }, 'fin de mois') : null,
+        ),
       ));
     }
     wrap.appendChild(card);
