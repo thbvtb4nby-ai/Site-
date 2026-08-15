@@ -117,17 +117,20 @@ function openModal(title, contentEl, opts = {}) {
   const root = document.getElementById('modal-root');
   const backdrop = h('div', { class:'modal-backdrop', onclick: (e) => { if (e.target === backdrop) close(); } });
   const modal = h('div', { class:'modal' });
+  const handle = h('div', { class:'modal-handle' });
   const header = h('header', {},
-    h('button', { onclick: close }, 'Annuler'),
+    h('button', { onclick: close }, opts.cancelText || 'Annuler'),
     h('h2', {}, title),
     opts.confirmText
       ? h('button', { class:'primary', onclick: () => { if (opts.onConfirm && opts.onConfirm() !== false) close(); } }, opts.confirmText)
-      : h('span')
+      : h('span', { style:'min-width:60px' })
   );
   const body = h('div', { class:'body' }, contentEl);
-  modal.appendChild(header); modal.appendChild(body);
+  modal.appendChild(handle);
+  modal.appendChild(header);
+  modal.appendChild(body);
   backdrop.appendChild(modal); root.appendChild(backdrop);
-  function close() { backdrop.remove(); }
+  function close() { backdrop.style.animation = 'fadeIn 0.2s reverse'; modal.style.animation = 'slideUp 0.25s reverse'; setTimeout(() => backdrop.remove(), 200); }
   return { close };
 }
 
@@ -161,34 +164,58 @@ function applyTheme() {
 }
 
 // ---------- Dashboard ----------
+function greeting() {
+  const hh = new Date().getHours();
+  if (hh < 6) return 'Bonne nuit';
+  if (hh < 12) return 'Bonjour';
+  if (hh < 18) return 'Bon après-midi';
+  return 'Bonsoir';
+}
+
 function renderDashboard() {
   const container = h('div');
-  container.appendChild(h('h1', {}, 'Accueil'));
+  container.appendChild(h('div', { class:'screen-header' },
+    h('h1', {}, greeting()),
+    h('div', { class:'subtitle' }, new Date().toLocaleDateString(state.settings.locale, { weekday:'long', day:'numeric', month:'long' })),
+  ));
+
   const { expense, income } = monthTotals();
-  container.appendChild(h('div', { class:'balance' },
+  const hero = h('div', { class:'hero' },
     h('div', { class:'label' }, 'Solde total'),
     h('div', { class:'val' }, fmt(totalBalance())),
-  ));
+  );
+  if (state.accounts.length) {
+    const strip = h('div', { class:'accounts-strip' });
+    for (const a of state.accounts) {
+      strip.appendChild(h('div', { class:'acc-pill' }, `${a.icon} ${a.name} · ${fmt(accountBalance(a.id))}`));
+    }
+    hero.appendChild(strip);
+  }
+  container.appendChild(hero);
+
   container.appendChild(h('div', { class:'tiles' },
     h('div', { class:'tile exp' },
-      h('div', { class:'label' }, 'Dépenses du mois'),
+      h('div', { class:'tile-icon' }, '↓'),
+      h('div', { class:'label' }, 'Dépenses'),
       h('div', { class:'val' }, fmt(expense))),
     h('div', { class:'tile inc' },
-      h('div', { class:'label' }, 'Revenus du mois'),
+      h('div', { class:'tile-icon' }, '↑'),
+      h('div', { class:'label' }, 'Revenus'),
       h('div', { class:'val' }, fmt(income))),
   ));
 
   // Recent transactions
   const recent = [...state.transactions].sort((a,b) => new Date(b.date) - new Date(a.date)).slice(0, 5);
   container.appendChild(h('div', { class:'list-title' },
-    h('h2', {}, 'Transactions récentes'),
-    h('a', { href:'#', onclick: (e) => { e.preventDefault(); currentTab='transactions'; render(); } }, 'Tout voir'),
+    h('h2', {}, 'Récent'),
+    recent.length ? h('a', { href:'#', onclick: (e) => { e.preventDefault(); currentTab='transactions'; render(); } }, 'Tout voir') : null,
   ));
   if (recent.length === 0) {
     container.appendChild(h('div', { class:'card empty' },
       h('div', { class:'icon' }, '🧾'),
-      h('p', {}, 'Aucune transaction'),
-      h('button', { class:'btn', onclick: () => openTransactionForm() }, 'Ajouter une transaction'),
+      h('div', { class:'title' }, 'Aucune transaction'),
+      h('div', { class:'desc' }, 'Ajoutez votre première dépense pour commencer.'),
+      h('button', { class:'btn gradient', onclick: () => openTransactionForm() }, '＋  Ajouter une transaction'),
     ));
   } else {
     const list = h('div', { class:'card card-list' });
@@ -233,6 +260,7 @@ function renderTxnRow(t) {
       h('div', { class:'s' }, `${fmtDateShort(t.date)} · ${acc?.name || '—'}`),
     ),
     h('div', { class:'amt '+cls }, `${sign}${fmt(t.amount)}`),
+    h('div', { class:'chevron' }, '›'),
   );
 }
 
@@ -242,11 +270,13 @@ const txnFilter = { search: '', kind: 'all', categoryId: null };
 function renderTransactions() {
   const container = h('div');
   container.appendChild(h('h1', {}, 'Transactions'));
-  const search = h('input', {
-    class:'search', type:'search', placeholder:'Rechercher…', value: txnFilter.search,
-    oninput: (e) => { txnFilter.search = e.target.value; refreshList(); }
-  });
-  container.appendChild(search);
+  const searchWrap = h('div', { class:'search-wrap' },
+    h('input', {
+      class:'search', type:'search', placeholder:'Rechercher…', value: txnFilter.search,
+      oninput: (e) => { txnFilter.search = e.target.value; refreshList(); }
+    })
+  );
+  container.appendChild(searchWrap);
   const seg = h('div', { class:'seg' },
     ...[['all','Tout'],['expense','Dépenses'],['income','Revenus'],['transfer','Virements']].map(([k,l]) =>
       h('button', {
@@ -274,7 +304,8 @@ function renderTransactions() {
     if (items.length === 0) {
       listWrap.appendChild(h('div', { class:'card empty' },
         h('div', { class:'icon' }, '🔍'),
-        h('p', {}, 'Aucune transaction')));
+        h('div', { class:'title' }, 'Aucun résultat'),
+        h('div', { class:'desc' }, 'Essayez d\'ajuster votre recherche ou vos filtres.')));
       return;
     }
     // Group by day
@@ -310,9 +341,11 @@ function openTransactionForm(existing) {
   }
   form.appendChild(seg);
 
-  form.appendChild(field('Montant',
-    h('input', { type:'number', inputmode:'decimal', step:'0.01', value: t.amount || '',
-      oninput: (e) => t.amount = parseFloat(e.target.value)||0 })));
+  const amtField = field('Montant',
+    h('input', { type:'number', inputmode:'decimal', step:'0.01', value: t.amount || '', placeholder:'0,00',
+      class:'amount-input',
+      oninput: (e) => t.amount = parseFloat(e.target.value)||0 }));
+  form.appendChild(amtField);
 
   form.appendChild(field('Date',
     h('input', { type:'date', value: t.date, oninput: (e) => t.date = e.target.value })));
@@ -389,8 +422,9 @@ function renderBudgets() {
   if (state.budgets.length === 0) {
     container.appendChild(h('div', { class:'card empty' },
       h('div', { class:'icon' }, '🥧'),
-      h('p', {}, 'Aucun budget'),
-      h('button', { class:'btn', onclick: () => openBudgetForm() }, 'Créer un budget'),
+      h('div', { class:'title' }, 'Aucun budget'),
+      h('div', { class:'desc' }, 'Fixez une limite mensuelle par catégorie pour garder le contrôle.'),
+      h('button', { class:'btn gradient', onclick: () => openBudgetForm() }, '＋  Créer un budget'),
     ));
     return container;
   }
@@ -407,13 +441,19 @@ function renderBudgetRow(b, s, e) {
     : state.transactions.filter(t => t.kind==='expense' && new Date(t.date)>=s && new Date(t.date)<=e).reduce((sum,t)=>sum+Number(t.amount),0);
   const pct = Math.min(100, (spent / (b.amount || 1)) * 100);
   const cls = pct >= 100 ? 'over' : pct >= 80 ? 'warn' : '';
-  return h('div', { class:'row', onclick: () => openBudgetForm(b), style:'display:block' },
-    h('div', { style:'display:flex;justify-content:space-between;margin-bottom:4px' },
-      h('div', {}, `${cat?.icon || '📊'} ${b.name}`),
-      h('div', { class:'amt' }, `${fmt(spent)} / ${fmt(b.amount)}`),
+  const remaining = Math.max(0, Number(b.amount) - spent);
+  const periodLabel = { weekly:'Hebdo', monthly:'Mensuel', quarterly:'Trimestriel', yearly:'Annuel' }[b.period] || b.period;
+  return h('div', { class:'budget-row', onclick: () => openBudgetForm(b) },
+    h('div', { class:'head' },
+      h('div', { class:'cat-dot', style:{ background: cat?.color || '#8e8e93' } }, cat?.icon || '📊'),
+      h('div', { class:'name' }, b.name),
+      h('div', { class:'amt' }, fmt(spent)),
     ),
     h('div', { class:'progress' }, h('div', { class:'fill '+cls, style:`width:${pct}%` })),
-    h('div', { class:'s', style:'font-size:12px;color:var(--text-2)' }, `${b.period === 'monthly' ? 'Mensuel' : b.period}`),
+    h('div', { class:'meta' },
+      h('span', {}, periodLabel),
+      h('span', {}, pct >= 100 ? `Dépassé de ${fmt(spent - b.amount)}` : `Reste ${fmt(remaining)}`)
+    ),
   );
 }
 
@@ -449,12 +489,16 @@ function openBudgetForm(existing) {
 // ---------- Goals ----------
 function renderGoalRow(g) {
   const pct = Math.min(100, (g.current / (g.target || 1)) * 100);
-  return h('div', { class:'row', style:'display:block', onclick: () => openGoalForm(g) },
-    h('div', { style:'display:flex;justify-content:space-between;margin-bottom:4px' },
-      h('div', {}, `${g.icon || '🎯'} ${g.name}`),
+  return h('div', { class:'goal-row', onclick: () => openGoalForm(g) },
+    h('div', { class:'head', style:'display:flex;align-items:center;gap:10px;margin-bottom:8px' },
+      h('div', { class:'cat-dot', style:{ background:'var(--grad-success)' } }, g.icon || '🎯'),
+      h('div', { style:'flex:1;font-weight:600;font-size:15px' }, g.name),
       h('div', { class:'amt' }, `${fmt(g.current)} / ${fmt(g.target)}`)),
-    h('div', { class:'progress' }, h('div', { class:'fill', style:`width:${pct}%` })),
-    g.deadline ? h('div', { style:'font-size:12px;color:var(--text-2)' }, `Échéance : ${fmtDate(g.deadline)}`) : null,
+    h('div', { class:'progress' }, h('div', { class:'fill', style:`width:${pct}%;background:var(--grad-success)` })),
+    h('div', { class:'meta', style:'display:flex;justify-content:space-between;font-size:12px;color:var(--text-2);margin-top:4px' },
+      h('span', {}, `${pct.toFixed(0)}%`),
+      g.deadline ? h('span', {}, `Échéance : ${fmtDate(g.deadline)}`) : h('span'),
+    ),
   );
 }
 
@@ -709,16 +753,21 @@ function openReportsScreen() {
 }
 
 function pieChart(entries, total) {
-  const size = 220, cx = size/2, cy = size/2, r = 90, hole = 55;
+  const size = 240, cx = size/2, cy = size/2, r = 100, hole = 66;
   let a = -Math.PI/2;
   const svg = document.createElementNS('http://www.w3.org/2000/svg','svg');
   svg.setAttribute('viewBox', `0 0 ${size} ${size}`);
   svg.setAttribute('class','chart');
-  svg.style.maxWidth = '260px'; svg.style.margin = '0 auto 12px';
+  svg.style.maxWidth = '260px'; svg.style.margin = '0 auto';
+  // subtle background ring
+  const bgRing = document.createElementNS('http://www.w3.org/2000/svg','circle');
+  bgRing.setAttribute('cx', cx); bgRing.setAttribute('cy', cy); bgRing.setAttribute('r', (r+hole)/2);
+  bgRing.setAttribute('fill', 'none'); bgRing.setAttribute('stroke', 'var(--card-2)'); bgRing.setAttribute('stroke-width', r - hole);
+  svg.appendChild(bgRing);
   for (const [cid, val] of entries) {
     const cat = state.categories.find(c => c.id === cid);
     const frac = val / total;
-    const a2 = a + frac * Math.PI * 2;
+    const a2 = a + frac * Math.PI * 2 - 0.006; // tiny gap
     const large = frac > 0.5 ? 1 : 0;
     const x1 = cx + Math.cos(a)*r, y1 = cy + Math.sin(a)*r;
     const x2 = cx + Math.cos(a2)*r, y2 = cy + Math.sin(a2)*r;
@@ -729,43 +778,69 @@ function pieChart(entries, total) {
     p.setAttribute('d', d);
     p.setAttribute('fill', cat?.color || '#8e8e93');
     svg.appendChild(p);
-    a = a2;
+    a = a2 + 0.006;
   }
   const wrap = document.createElement('div');
-  wrap.className = 'card';
+  wrap.className = 'chart-card';
   wrap.appendChild(svg);
-  const totalDiv = h('div', { style:'text-align:center;margin-top:-140px;pointer-events:none' },
-    h('div', { style:'font-size:12px;color:var(--text-2)' }, 'Total'),
-    h('div', { style:'font-size:20px;font-weight:600' }, fmt(total)));
-  wrap.appendChild(totalDiv);
+  wrap.appendChild(h('div', { class:'chart-center' },
+    h('div', { class:'label' }, 'Total'),
+    h('div', { class:'val' }, fmt(total))));
   return wrap;
 }
 
 function barsChart(months) {
-  const w = 320, h_ = 160, pad = 24, bw = (w - pad*2) / months.length;
+  const w = 340, h_ = 180, pad = 22, bw = (w - pad*2) / months.length;
   const max = Math.max(1, ...months.map(m => Math.max(m.expense, m.income)));
-  const svg = document.createElementNS('http://www.w3.org/2000/svg','svg');
+  const svgNS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(svgNS,'svg');
   svg.setAttribute('viewBox', `0 0 ${w} ${h_}`); svg.setAttribute('class','chart');
+
+  // gradients
+  const defs = document.createElementNS(svgNS,'defs');
+  defs.innerHTML = `
+    <linearGradient id="gExp" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ff375f"/><stop offset="100%" stop-color="#ff3b30"/>
+    </linearGradient>
+    <linearGradient id="gInc" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#30d158"/><stop offset="100%" stop-color="#0a84ff"/>
+    </linearGradient>`;
+  svg.appendChild(defs);
+
+  const baseY = h_ - 26;
+  // baseline
+  const baseline = document.createElementNS(svgNS,'line');
+  baseline.setAttribute('x1', pad); baseline.setAttribute('x2', w - pad);
+  baseline.setAttribute('y1', baseY); baseline.setAttribute('y2', baseY);
+  baseline.setAttribute('stroke', 'var(--sep)'); baseline.setAttribute('stroke-width','1');
+  svg.appendChild(baseline);
+
   months.forEach((m,i) => {
     const x = pad + bw*i;
-    const eh = (m.expense/max)*(h_-40);
-    const ih = (m.income/max)*(h_-40);
-    const rExp = document.createElementNS('http://www.w3.org/2000/svg','rect');
-    rExp.setAttribute('x', x+4); rExp.setAttribute('y', h_-20-eh); rExp.setAttribute('width', bw/2-6); rExp.setAttribute('height', eh); rExp.setAttribute('fill', '#ff3b30'); rExp.setAttribute('rx', 3);
+    const eh = (m.expense/max)*(h_-50);
+    const ih = (m.income/max)*(h_-50);
+    const barW = Math.max(6, bw/2 - 8);
+    const rExp = document.createElementNS(svgNS,'rect');
+    rExp.setAttribute('x', x+4); rExp.setAttribute('y', baseY-eh);
+    rExp.setAttribute('width', barW); rExp.setAttribute('height', eh);
+    rExp.setAttribute('fill', 'url(#gExp)'); rExp.setAttribute('rx', 4);
     svg.appendChild(rExp);
-    const rInc = document.createElementNS('http://www.w3.org/2000/svg','rect');
-    rInc.setAttribute('x', x+bw/2+2); rInc.setAttribute('y', h_-20-ih); rInc.setAttribute('width', bw/2-6); rInc.setAttribute('height', ih); rInc.setAttribute('fill', '#34c759'); rInc.setAttribute('rx', 3);
+    const rInc = document.createElementNS(svgNS,'rect');
+    rInc.setAttribute('x', x + bw/2 + 4); rInc.setAttribute('y', baseY-ih);
+    rInc.setAttribute('width', barW); rInc.setAttribute('height', ih);
+    rInc.setAttribute('fill', 'url(#gInc)'); rInc.setAttribute('rx', 4);
     svg.appendChild(rInc);
-    const label = document.createElementNS('http://www.w3.org/2000/svg','text');
-    label.setAttribute('x', x + bw/2); label.setAttribute('y', h_-6); label.setAttribute('text-anchor','middle');
-    label.setAttribute('font-size', '10'); label.setAttribute('fill', 'currentColor'); label.setAttribute('opacity','0.7');
+    const label = document.createElementNS(svgNS,'text');
+    label.setAttribute('x', x + bw/2); label.setAttribute('y', h_-8); label.setAttribute('text-anchor','middle');
+    label.setAttribute('font-size', '11'); label.setAttribute('font-weight','600');
+    label.setAttribute('fill', 'var(--text-2)');
     label.textContent = m.label; svg.appendChild(label);
   });
-  const wrap = document.createElement('div'); wrap.className = 'card';
+  const wrap = document.createElement('div'); wrap.className = 'chart-card';
   wrap.appendChild(svg);
-  wrap.appendChild(h('div', { style:'display:flex;gap:14px;justify-content:center;font-size:12px;color:var(--text-2);margin-top:6px' },
-    h('span', {}, '● Dépenses'), h('span', {}, '● Revenus')));
-  wrap.firstChild.querySelectorAll('text').forEach(()=>{});
+  wrap.appendChild(h('div', { class:'chart-legend' },
+    h('span', {}, h('span', { class:'dot', style:'background:#ff3b30' }), 'Dépenses'),
+    h('span', {}, h('span', { class:'dot', style:'background:#30d158' }), 'Revenus')));
   return wrap;
 }
 
@@ -790,9 +865,9 @@ function renderMore() {
 }
 function row(icon, label, onClick) {
   return h('div', { class:'row', onclick: onClick },
-    h('div', { style:'font-size:20px;width:28px;text-align:center' }, icon),
-    h('div', { class:'grow' }, label),
-    h('div', { style:'color:var(--text-2)' }, '›'),
+    h('div', { class:'ico-txt' }, icon),
+    h('div', { class:'grow' }, h('div', { class:'t' }, label)),
+    h('div', { class:'chevron' }, '›'),
   );
 }
 
