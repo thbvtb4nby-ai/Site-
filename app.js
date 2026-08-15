@@ -24,6 +24,12 @@ const DEFAULT_STATE = () => ({
   budgets: [],
   goals: [],
   recurring: [],
+  plan: {
+    incomes: [
+      // exemples pour montrer le format
+    ],
+    fixed: [],
+  },
 });
 
 let state = load();
@@ -34,7 +40,11 @@ function load() {
     if (!raw) return DEFAULT_STATE();
     const s = JSON.parse(raw);
     const def = DEFAULT_STATE();
-    return { ...def, ...s, settings: { ...def.settings, ...(s.settings||{}) } };
+    return {
+      ...def, ...s,
+      settings: { ...def.settings, ...(s.settings||{}) },
+      plan: { incomes: s.plan?.incomes || [], fixed: s.plan?.fixed || [] },
+    };
   } catch { return DEFAULT_STATE(); }
 }
 function save() { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
@@ -221,6 +231,29 @@ function renderDashboard() {
     const list = h('div', { class:'card card-list' });
     for (const t of recent) list.appendChild(renderTxnRow(t));
     container.appendChild(list);
+  }
+
+  // Planner summary (reste à vivre)
+  if (state.plan.incomes.length || state.plan.fixed.length) {
+    const { income: pi, fixed: pf, remaining: pr } = planTotals();
+    const dim = new Date(new Date().getFullYear(), new Date().getMonth()+1, 0).getDate();
+    const perDay = pr / dim;
+    container.appendChild(h('h2', {}, 'Prévisionnel'));
+    const card = h('div', { class:'card', onclick: openPlannerScreen, style:'cursor:pointer' },
+      h('div', { class:'spaced' },
+        h('div', {},
+          h('div', { style:'font-size:13px;color:var(--text-2);font-weight:600;text-transform:uppercase;letter-spacing:0.05em' }, 'Reste à vivre'),
+          h('div', { class: 'amt '+(pr>=0?'pos':'neg'), style:'font-size:28px;margin-top:4px' }, fmt(pr)),
+        ),
+        h('div', { style:'text-align:right' },
+          h('div', { style:'font-size:12px;color:var(--text-2)' }, `${fmt(pi)} entrées`),
+          h('div', { style:'font-size:12px;color:var(--text-2);margin-top:2px' }, `${fmt(pf)} charges`),
+        ),
+      ),
+      h('div', { style:'margin-top:10px;font-size:13px;color:var(--text-2)' },
+        `≈ ${fmt(perDay)} / jour sur ${dim} jours`),
+    );
+    container.appendChild(card);
   }
 
   // Budgets summary
@@ -849,6 +882,7 @@ function renderMore() {
   const wrap = h('div');
   wrap.appendChild(h('h1', {}, 'Plus'));
   const menu = h('div', { class:'settings-group' },
+    row('🧮','Prévisionnel mensuel', openPlannerScreen),
     row('📊','Rapports', openReportsScreen),
     row('💳','Comptes', openAccountsScreen),
     row('🏷️','Catégories', openCategoriesScreen),
@@ -942,6 +976,157 @@ function openAboutScreen() {
   wrap.appendChild(h('p', {}, 'Astuce : depuis Safari sur iPhone, appuyez sur Partager → « Ajouter à l\'écran d\'accueil » pour installer l\'app.'));
   wrap.appendChild(h('p', { style:'color:var(--text-2);font-size:13px' }, 'Version 0.1'));
   openModal('À propos', wrap);
+}
+
+// ===================== Planner (revenus & charges fixes) =====================
+function planTotals() {
+  const income = (state.plan.incomes || []).reduce((s, x) => s + Number(x.amount || 0), 0);
+  const fixed = (state.plan.fixed || []).reduce((s, x) => s + Number(x.amount || 0), 0);
+  return { income, fixed, remaining: income - fixed };
+}
+
+function openPlannerScreen() {
+  const wrap = h('div');
+  const { income, fixed, remaining } = planTotals();
+  const daysInMonth = new Date(new Date().getFullYear(), new Date().getMonth()+1, 0).getDate();
+  const perDay = remaining / daysInMonth;
+
+  // Summary card
+  const remCls = remaining >= 0 ? 'pos' : 'neg';
+  const hero = h('div', { class:'hero', style: remaining >= 0
+    ? 'background: var(--grad-hero)'
+    : 'background: var(--grad-danger)' },
+    h('div', { class:'label' }, 'Reste à vivre ce mois'),
+    h('div', { class:'val' }, fmt(remaining)),
+    h('div', { style:'margin-top:14px;font-size:13px;opacity:0.9;font-weight:600' },
+      `Soit environ ${fmt(perDay)} par jour · ${daysInMonth} jours`),
+  );
+  wrap.appendChild(hero);
+
+  // Two summary tiles
+  wrap.appendChild(h('div', { class:'tiles' },
+    h('div', { class:'tile inc' },
+      h('div', { class:'tile-icon' }, '↑'),
+      h('div', { class:'label' }, 'Revenus'),
+      h('div', { class:'val' }, fmt(income))),
+    h('div', { class:'tile exp' },
+      h('div', { class:'tile-icon' }, '↓'),
+      h('div', { class:'label' }, 'Charges fixes'),
+      h('div', { class:'val' }, fmt(fixed))),
+  ));
+
+  // Incomes section
+  wrap.appendChild(h('div', { class:'list-title' },
+    h('h2', {}, '💰 Revenus mensuels'),
+    h('a', { href:'#', onclick: e => { e.preventDefault(); openPlanItemForm('incomes'); } }, '＋ Ajouter'),
+  ));
+  if (!state.plan.incomes.length) {
+    wrap.appendChild(h('div', { class:'card empty' },
+      h('div', { class:'icon' }, '💼'),
+      h('div', { class:'title' }, 'Aucun revenu'),
+      h('div', { class:'desc' }, 'Ajoutez votre salaire, une aide, une bourse…'),
+      h('button', { class:'btn gradient', onclick: () => openPlanItemForm('incomes') }, '＋  Ajouter un revenu'),
+    ));
+  } else {
+    const list = h('div', { class:'card card-list' });
+    for (const item of state.plan.incomes) list.appendChild(renderPlanRow('incomes', item, '#30d158'));
+    wrap.appendChild(list);
+  }
+
+  // Fixed expenses section
+  wrap.appendChild(h('div', { class:'list-title' },
+    h('h2', {}, '🏠 Charges fixes'),
+    h('a', { href:'#', onclick: e => { e.preventDefault(); openPlanItemForm('fixed'); } }, '＋ Ajouter'),
+  ));
+  if (!state.plan.fixed.length) {
+    wrap.appendChild(h('div', { class:'card empty' },
+      h('div', { class:'icon' }, '🧾'),
+      h('div', { class:'title' }, 'Aucune charge fixe'),
+      h('div', { class:'desc' }, 'Loyer, abonnements, assurance, forfait…'),
+      h('button', { class:'btn gradient', onclick: () => openPlanItemForm('fixed') }, '＋  Ajouter une charge'),
+    ));
+  } else {
+    const list = h('div', { class:'card card-list' });
+    for (const item of state.plan.fixed) list.appendChild(renderPlanRow('fixed', item, '#ff3b30'));
+    wrap.appendChild(list);
+  }
+
+  // Info footer
+  wrap.appendChild(h('div', { style:'font-size:13px;color:var(--text-2);margin-top:16px;text-align:center;line-height:1.5' },
+    'Le prévisionnel est indépendant de vos transactions réelles.',
+    h('br'),
+    'Il sert à planifier votre budget mensuel type.'));
+
+  openModal('Prévisionnel mensuel', wrap);
+}
+
+function renderPlanRow(kind, item, defaultColor) {
+  return h('div', { class:'row', onclick: () => openPlanItemForm(kind, item) },
+    h('div', { class:'ico-wrap', style:{ background: item.color || defaultColor } }, item.icon || '•'),
+    h('div', { class:'grow' },
+      h('div', { class:'t' }, item.name),
+      item.day ? h('div', { class:'s' }, `Le ${item.day} du mois`) : null,
+    ),
+    h('div', { class:'amt '+(kind==='incomes'?'pos':'neg') }, `${kind==='incomes'?'+':'-'}${fmt(item.amount)}`),
+    h('div', { class:'chevron' }, '›'),
+  );
+}
+
+function openPlanItemForm(kind, existing) {
+  const isIncome = kind === 'incomes';
+  const defaults = isIncome
+    ? { name:'', amount:0, day:'', icon:'💼', color:'#30d158' }
+    : { name:'', amount:0, day:'', icon:'🧾', color:'#ff3b30' };
+  const it = existing ? { ...existing } : { id:null, ...defaults };
+
+  const form = h('div');
+  form.appendChild(field('Nom',
+    h('input', { type:'text', value: it.name,
+      placeholder: isIncome ? 'Ex. Salaire, Aide parents…' : 'Ex. Loyer, Netflix…',
+      oninput: e => it.name = e.target.value })));
+  form.appendChild(field('Montant mensuel',
+    h('input', { type:'number', inputmode:'decimal', step:'0.01', class:'amount-input',
+      value: it.amount || '', placeholder:'0,00',
+      oninput: e => it.amount = parseFloat(e.target.value)||0 })));
+  form.appendChild(field('Jour du mois (optionnel)',
+    h('input', { type:'number', min:'1', max:'31', value: it.day || '',
+      placeholder:'Ex. 5 pour le 5 du mois',
+      oninput: e => it.day = e.target.value ? parseInt(e.target.value) : '' })));
+
+  const commonIcons = isIncome
+    ? ['💼','💰','👨‍👩‍👧','🎓','🏛️','🎁','💵','📈','🪙','💳']
+    : ['🏠','🔌','💧','🔥','📱','📶','🚗','🎬','🎵','🎮','🏋️','🍽️','💊','🧾','☂️','🐾','📚','🛡️'];
+  form.appendChild(field('Icône', iconPicker(commonIcons, it.icon, v => it.icon = v)));
+  form.appendChild(field('Couleur', colorPicker(it.color, v => it.color = v)));
+
+  if (existing) form.appendChild(h('button', { class:'btn danger', onclick: () => {
+    confirmDialog('Supprimer cette ligne ?', () => {
+      state.plan[kind] = state.plan[kind].filter(x => x.id !== existing.id);
+      save(); m.close();
+      setTimeout(openPlannerScreen, 250);
+      toast('Supprimé');
+    });
+  } }, 'Supprimer'));
+
+  const title = existing
+    ? (isIncome ? 'Modifier revenu' : 'Modifier charge')
+    : (isIncome ? 'Nouveau revenu' : 'Nouvelle charge');
+
+  const m = openModal(title, form, {
+    confirmText: 'Enregistrer',
+    onConfirm: () => {
+      if (!it.name) { toast('Nom requis'); return false; }
+      if (!it.amount || it.amount <= 0) { toast('Montant invalide'); return false; }
+      if (existing) {
+        Object.assign(state.plan[kind].find(x => x.id === existing.id), it);
+      } else {
+        it.id = uid();
+        state.plan[kind].push(it);
+      }
+      save(); toast('Enregistré');
+      setTimeout(openPlannerScreen, 250);
+    }
+  });
 }
 
 // ===================== Tab bar wiring =====================
