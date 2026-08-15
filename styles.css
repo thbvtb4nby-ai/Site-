@@ -783,6 +783,29 @@ svg.chart { width: 100%; height: auto; display: block; }
   50% { transform: translate(-10px, 12px); }
 }
 
+/* Backup reminder banner */
+.backup-banner {
+  position: fixed;
+  left: 12px; right: 12px;
+  bottom: calc(var(--tabbar-h) + var(--safe-bottom) + 10px);
+  background: var(--grad-hero); color: white;
+  padding: 14px 16px; border-radius: 14px;
+  display: flex; align-items: center; gap: 10px;
+  z-index: 250;
+  box-shadow: 0 10px 30px -8px rgba(10,132,255,0.5);
+  animation: toastIn 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.backup-banner .grow { flex: 1; min-width: 0; }
+.backup-banner button {
+  background: rgba(255,255,255,0.22); color: white; border: 0;
+  padding: 8px 14px; border-radius: 10px; font-weight: 600; font-size: 13px;
+  backdrop-filter: blur(10px);
+}
+.backup-banner button.close {
+  background: transparent; padding: 4px 8px; font-size: 20px;
+  line-height: 1;
+}
+
 /* Reduce motion */
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: 0.01s !important; transition-duration: 0.01s !important; }

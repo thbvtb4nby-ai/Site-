@@ -3,7 +3,7 @@ const STORAGE_KEY = 'depenses.v1';
 const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 
 const DEFAULT_STATE = () => ({
-  settings: { currency: 'EUR', locale: 'fr-FR', theme: 'system' },
+  settings: { currency: 'EUR', locale: 'fr-FR', theme: 'system', lastBackupAt: null, autoBackupDays: 7 },
   accounts: [
     { id: uid(), name: 'Compte courant', kind: 'checking', initial: 0, color: '#0a84ff', icon: '💳' },
     { id: uid(), name: 'Espèces', kind: 'cash', initial: 0, color: '#34c759', icon: '💵' },
@@ -47,7 +47,65 @@ function load() {
     };
   } catch { return DEFAULT_STATE(); }
 }
-function save() { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
+function save() {
+  const json = JSON.stringify(state);
+  try { localStorage.setItem(STORAGE_KEY, json); } catch {}
+  // Redondance : sessionStorage (au cas où)
+  try { sessionStorage.setItem(STORAGE_KEY, json); } catch {}
+  // IndexedDB en fallback (plus persistant sur iOS)
+  saveToIDB(json);
+}
+
+// ---- IndexedDB fallback pour survivre à un éventuel nettoyage iOS ----
+let _idbDb = null;
+function openIDB() {
+  return new Promise((resolve) => {
+    if (_idbDb) return resolve(_idbDb);
+    if (!('indexedDB' in window)) return resolve(null);
+    const req = indexedDB.open('depenses', 1);
+    req.onupgradeneeded = () => req.result.createObjectStore('kv');
+    req.onsuccess = () => { _idbDb = req.result; resolve(_idbDb); };
+    req.onerror = () => resolve(null);
+  });
+}
+async function saveToIDB(json) {
+  const db = await openIDB(); if (!db) return;
+  try {
+    const tx = db.transaction('kv', 'readwrite');
+    tx.objectStore('kv').put(json, STORAGE_KEY);
+  } catch {}
+}
+async function loadFromIDB() {
+  const db = await openIDB(); if (!db) return null;
+  return new Promise((resolve) => {
+    try {
+      const req = db.transaction('kv').objectStore('kv').get(STORAGE_KEY);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => resolve(null);
+    } catch { resolve(null); }
+  });
+}
+
+// Demande à iOS de rendre le stockage persistant (empêche l'éviction automatique)
+async function requestPersistent() {
+  if (navigator.storage && navigator.storage.persist) {
+    try { await navigator.storage.persist(); } catch {}
+  }
+}
+
+// Récupération asynchrone depuis IndexedDB si localStorage est vide (après nettoyage Safari)
+async function tryRecoverFromIDB() {
+  if (localStorage.getItem(STORAGE_KEY)) return false;
+  const idbJson = await loadFromIDB();
+  if (idbJson) {
+    localStorage.setItem(STORAGE_KEY, idbJson);
+    state = load();
+    render();
+    toast('Données restaurées ✓');
+    return true;
+  }
+  return false;
+}
 
 // ===================== Utils =====================
 const fmt = (n) => new Intl.NumberFormat(state.settings.locale, {
@@ -918,7 +976,7 @@ function renderMore() {
   wrap.appendChild(menu);
   wrap.appendChild(h('div', { class:'settings-group' },
     row('⚙️','Réglages', openSettingsScreen),
-    row('📥','Importer / Exporter', openImportExportScreen),
+    row('💾','Sauvegarde & restauration', openImportExportScreen),
     row('❓','À propos', openAboutScreen),
   ));
   return wrap;
@@ -955,14 +1013,35 @@ function openSettingsScreen() {
 
 function openImportExportScreen() {
   const wrap = h('div');
-  wrap.appendChild(h('button', { class:'btn', onclick: exportJSON }, '📤 Exporter (JSON)'));
+  const lastBk = state.settings.lastBackupAt
+    ? `Dernière sauvegarde : ${new Date(state.settings.lastBackupAt).toLocaleString(state.settings.locale)}`
+    : 'Aucune sauvegarde manuelle pour l\'instant.';
+  wrap.appendChild(h('div', { class:'hint' },
+    '📌 Astuce : sauvegarde régulièrement dans Fichiers → iCloud Drive. Si un jour ton iPhone efface les données Safari, tu pourras tout restaurer.',
+    h('br'), h('br'),
+    h('span', { style:'color:var(--text)' }, lastBk),
+  ));
+  wrap.appendChild(h('button', { class:'btn gradient', onclick: () => { exportJSON(); state.settings.lastBackupAt = Date.now(); save(); } },
+    '💾  Sauvegarder maintenant'));
   wrap.appendChild(h('div',{style:'height:8px'}));
-  wrap.appendChild(h('button', { class:'btn secondary', onclick: exportCSV }, '📤 Exporter transactions (CSV)'));
-  wrap.appendChild(h('div',{style:'height:16px'}));
-  const fileIn = h('input', { type:'file', accept:'.json', style:'display:none', onchange: (e) => { const f = e.target.files[0]; if (f) importJSON(f); } });
+  wrap.appendChild(h('button', { class:'btn secondary', onclick: exportCSV }, '📊  Exporter transactions (CSV)'));
+  wrap.appendChild(h('div',{style:'height:20px'}));
+
+  wrap.appendChild(h('div', { class:'field-label' }, 'Restaurer une sauvegarde'));
+  const fileIn = h('input', { type:'file', accept:'.json,application/json', style:'display:none', onchange: (e) => { const f = e.target.files[0]; if (f) importJSON(f); } });
   wrap.appendChild(fileIn);
-  wrap.appendChild(h('button', { class:'btn secondary', onclick: () => fileIn.click() }, '📥 Importer (JSON)'));
-  openModal('Import / Export', wrap);
+  wrap.appendChild(h('button', { class:'btn secondary', onclick: () => fileIn.click() }, '📥  Importer un fichier JSON'));
+  wrap.appendChild(h('div', { class:'hint', style:'margin-top:12px' },
+    '💡 Pour restaurer : appuie sur ce bouton, choisis "Parcourir" puis va dans Fichiers → iCloud Drive → sélectionne ton dernier "depenses-*.json".'));
+
+  wrap.appendChild(h('div',{style:'height:16px'}));
+  wrap.appendChild(h('div', { class:'field-label' }, 'Rappel de sauvegarde'));
+  wrap.appendChild(field('M\'inviter à sauvegarder tous les',
+    h('select', { onchange: e => { state.settings.autoBackupDays = parseInt(e.target.value); save(); } },
+      ...[[0,'Jamais'],[3,'3 jours'],[7,'7 jours'],[14,'14 jours'],[30,'30 jours']].map(([v,l]) =>
+        h('option', { value: v, selected: (state.settings.autoBackupDays||7) === v }, l)))));
+
+  openModal('Sauvegarde & restauration', wrap);
 }
 function download(filename, content, type='application/json') {
   const blob = new Blob([content], { type });
@@ -971,7 +1050,12 @@ function download(filename, content, type='application/json') {
   a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
-function exportJSON() { download(`depenses-${todayISO()}.json`, JSON.stringify(state, null, 2)); toast('Exporté'); }
+function exportJSON() {
+  download(`depenses-${todayISO()}.json`, JSON.stringify(state, null, 2));
+  state.settings.lastBackupAt = Date.now();
+  save();
+  toast('Sauvegarde téléchargée ✓');
+}
 function exportCSV() {
   const rows = [['date','type','montant','commerçant','catégorie','compte','note']];
   for (const t of state.transactions) {
@@ -1252,7 +1336,42 @@ render();
 // Auto-generate due recurring items on load
 if (applyRecurring() > 0) render();
 
+// Demande le stockage persistant (empêche iOS d'effacer les données automatiquement)
+requestPersistent();
+
+// Tente de récupérer les données depuis IndexedDB si localStorage est vide
+tryRecoverFromIDB();
+
+// Rappel de sauvegarde
+setTimeout(() => {
+  const days = state.settings.autoBackupDays || 0;
+  if (!days) return;
+  const last = state.settings.lastBackupAt || 0;
+  const elapsedDays = (Date.now() - last) / (1000*60*60*24);
+  if (elapsedDays > days && (state.transactions.length || state.plan.incomes.length || state.plan.fixed.length)) {
+    showBackupBanner();
+  }
+}, 1200);
+
+function showBackupBanner() {
+  const root = document.getElementById('toast-root');
+  const banner = h('div', { class:'backup-banner' },
+    h('div', { class:'grow' },
+      h('div', { style:'font-weight:700;font-size:14px' }, '💾 Pense à sauvegarder'),
+      h('div', { style:'font-size:12px;opacity:0.85;margin-top:2px' }, 'Pour ne rien perdre en cas de nettoyage Safari.'),
+    ),
+    h('button', { onclick: () => { exportJSON(); banner.remove(); } }, 'Sauver'),
+    h('button', { class:'close', onclick: () => banner.remove(), 'aria-label':'Fermer' }, '×'),
+  );
+  root.appendChild(banner);
+}
+
 // Service worker
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(()=>{}));
 }
+
+// Sauvegarde sécurité quand l'app passe en arrière-plan
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) save();
+});
